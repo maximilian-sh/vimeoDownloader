@@ -18,20 +18,24 @@
 - 📥 Downloads **best video + best audio** streams
 - 🎬 Merges into clean **MP4** format
 - ⚡ Accelerated using **aria2c** (up to 16x faster)
-- 🖥️ Simple terminal interface
+- 📊 Real-time download progress tracking
+- 🗂️ Organized downloads in dedicated folder
+- 🧹 Automatic cleanup of temporary files
+- 🖥️ Interactive browser selection menu
 
 ## 🛠️ Requirements
 
 - Python >= 3.7
 - yt-dlp
 - aria2c
+- questionary (Python package)
 - A working browser session (Chrome recommended)
 
 ## 🚀 Setup Guide
 
-### 1. Install yt-dlp
+### 1. Install Python Dependencies
 ```bash
-pip install -U yt-dlp
+pip install -U yt-dlp questionary
 ```
 
 ### 2. Install aria2c
@@ -48,7 +52,7 @@ sudo apt install aria2
 
 ### 3. Download the Script
 1. Save `vimeo-dl.py` to your preferred location
-2. Make it executable (optional):
+2. Make it executable:
 ```bash
 chmod +x vimeo-dl.py
 ```
@@ -60,30 +64,46 @@ Simply run:
 ./vimeo-dl.py
 ```
 
-The script will prompt you for:
-1. The Vimeo player URL (from the iframe)
-2. The page URL where the video is embedded
-3. Your browser choice (default: chrome)
+The script will:
+1. Check for required dependencies
+2. Present an interactive browser selection menu
+3. Prompt for the Vimeo player URL
+4. Ask for the page URL where the video is embedded
+5. Show download progress in real-time
+6. Save the video to `~/Downloads/vimeo_downloads/`
 
 ## 📝 Example
 
 ```bash
-📥 Vimeo Embed Downloader (Optimized with aria2c)
+Vimeo Downloader
+==================================================
 
-🔗 Enter Vimeo player URL:
+Enter Vimeo player URL:
 > https://player.vimeo.com/video/123456789
 
-🌐 Enter the page URL where the video is embedded:
+Enter the page URL where the video is embedded:
 > https://example.com/video-page
 
-🟣 Browser to extract cookies from [default: chrome]:
-> 
+Select browser for cookie extraction:
+  > chrome
+    firefox
+    edge
+    brave
+    chromium
+    safari
 
-🎯 Downloading: https://player.vimeo.com/video/123456789
-🌐 Using referer: https://example.com/video-page
-🟣 Cookies from browser: chrome
-...
-✅ Download + merge completed successfully!
+Download Configuration:
+Video URL: https://player.vimeo.com/video/123456789
+Referer:   https://example.com/video-page
+Browser:   chrome
+Output Directory: /Users/username/Downloads/vimeo_downloads
+==================================================
+
+Starting download...
+[download] Downloading video ...
+[download] Downloading audio ...
+[download] Merging formats ...
+Download completed successfully.
 ```
 
 ## 💡 Tips & Notes
@@ -91,18 +111,24 @@ The script will prompt you for:
 ### Important Notes
 - Ensure you're logged into the platform in your browser before downloading
 - First-time users may need to confirm yt-dlp's browser cookie access
-- Downloaded MP4s appear in the script's directory
+- Downloaded videos appear in `~/Downloads/vimeo_downloads/`
+- Temporary files are automatically cleaned up
 
 ### Browser Support
-- Works with Chrome (default)
-- Also supports Brave, Edge, and Chromium
-- Simply type the browser name when prompted
+- Interactive selection menu for supported browsers
+- Chrome (default)
+- Firefox
+- Edge
+- Brave
+- Chromium
+- Safari
 
-### Future Enhancements
-- Create a proper .app for double-click launching
-- Add Automator workflow support for Mac
-- Add custom ASCII art and colorized CLI outputs
-- Implement fancy emoji menus
+### Features
+- Real-time progress tracking
+- Automatic file organization
+- Clean temporary file management
+- Error handling and validation
+- User-friendly interface
 
 ---
 
