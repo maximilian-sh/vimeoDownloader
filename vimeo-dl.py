@@ -33,37 +33,48 @@ class DownloadError(Exception):
     """Raised when download fails."""
     pass
 
-def clean_progress_output(line: str) -> Optional[str]:
-    """Clean and format progress output."""
-    # Extract download progress information
-    if '[download]' in line and '%' in line:
-        return line.strip()
+def clean_progress_output(line: str) -> tuple[str, Optional[str]]:
+    """Categorize and clean yt-dlp output line (from merged stdout/stderr)."""
+    line = line.strip()
+
+    # Priority 1: Standard yt-dlp download progress
+    if (
+        line.startswith('[download]') and
+        '%' in line and
+        ('MiB' in line or 'KiB' in line or 'GiB' in line or 'bytes' in line) and
+        ' of ' in line  # Ensures it's like "10% of 100MiB"
+    ):
+        cleaned_progress = line.replace("[download]", "Progress:").strip()
+        return "PROGRESS", cleaned_progress
+
+    # Simplified Status lines
+    if line.startswith('[vimeo]'):
+        if 'Extracting URL:' in line: return "STATUS_INFO", "Extracting info..."
+        if 'Downloading webpage' in line: return "STATUS_INFO", "Fetching page..."
+        return "IGNORE", None
+
+    if 'Merging formats' in line or ('[ffmpeg]' in line and 'Merging' in line.lower()):
+        return "STATUS_MERGE", "Merging streams..."
     
-    # Extract aria2c progress
-    if '[DL:' in line:
-        # Extract download speed
-        dl_match = re.search(r'\[DL:([\d.]+)MiB\]', line)
-        if dl_match:
-            speed = float(dl_match.group(1))
-            
-            # Find any percentage in the line
-            percent_match = re.search(r'(\d+)%', line)
-            percent = percent_match.group(1) if percent_match else ""
-            
-            if percent:
-                return f"Downloading... {speed:.1f} MiB/s ({percent}%)"
-            else:
-                return f"Downloading... {speed:.1f} MiB/s"
-    
-    # Show merging status
-    if '[Merger]' in line:
-        return "Merging video and audio..."
-    
-    # Show moving status
-    if '[MoveFiles]' in line:
-        return "Moving file to downloads folder..."
-        
-    return None
+    if line.startswith('[info]') and 'Video title:' in line:
+        return "STATUS_INFO", line.replace("[info]", "Info:").strip()
+    if line.startswith('[download]') and 'Destination:' in line:
+        return "IGNORE", None 
+    if line.startswith('[download]') and 'has already been downloaded' in line:
+        return "STATUS_INFO", "Video already downloaded. Skipping..."
+    if line.startswith('[FixupM3u8]') or line.startswith('[FixupTimestamp]'):
+        return "STATUS_INFO", "Finalizing stream..."
+
+    # Catch common error indicators
+    if (
+        line.lower().startswith('error:') or 
+        line.lower().startswith('yt-dlp: error:') or
+        (line.startswith('WARNING:') and 'unable to download video data' in line.lower()) or
+        (line.startswith('ERROR:') and 'giving up' in line.lower()) # yt-dlp can also just use plain ERROR:
+    ):
+        return "ERROR_LINE", line
+
+    return "IGNORE", None
 
 class VimeoDownloader:
     SUPPORTED_BROWSERS = [
@@ -170,11 +181,11 @@ class VimeoDownloader:
             "-f", "bestvideo+bestaudio/best",
             "--merge-output-format", "mp4",
             "--downloader", "aria2c",
-            "--downloader-args", "aria2c:-x16 -s16 -k1M",
+            "--downloader-args", "aria2c:-x16 -s16 -k1M --console-log-level=warn --show-console-readout=true",
+            "--progress",
+            "--newline", # Force each progress update to be on a new line from yt-dlp
             "--paths", f"temp:{self.temp_dir}",
             "--paths", f"home:{self.downloads_dir}",
-            "--progress",
-            "--newline",
             vimeo_url
         ]
 
@@ -182,50 +193,87 @@ class VimeoDownloader:
             process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT, # Merge stderr into stdout
                 text=True,
-                bufsize=1,
+                bufsize=1, 
                 universal_newlines=True
             )
             
-            last_progress = ""
-            # Process output in real-time
-            while True:
-                output = process.stdout.readline()
-                if output == '' and process.poll() is not None:
-                    break
-                if output:
-                    # Clean and format the progress output
-                    progress = clean_progress_output(output)
-                    if progress and progress != last_progress:
-                        print(progress + ' ' * 20, end='\r')
-                        last_progress = progress
+            spinner_frames = ["⢿", "⣻", "⣽", "⣾", "⣷", "⣯", "⣟", "⡿"]
+            spinner_idx = 0
+            PROGRESS_LINE_WIDTH = 80  # Ensure it's wide enough
+            last_line_ended_with_cr = False # True if last output was progress/spinner
             
-            # Check for errors
+            logger.info("Starting download...") # Moved here to appear before any yt-dlp output
+
+            while True:
+                output_line_raw = process.stdout.readline()
+
+                if not output_line_raw and process.poll() is not None:
+                    break # Process finished and no more output
+
+                if output_line_raw:
+                    line_type, message = clean_progress_output(output_line_raw)
+
+                    if line_type == "PROGRESS":
+                        # Progress always overwrites current line.
+                        sys.stdout.write(message.ljust(PROGRESS_LINE_WIDTH) + "\r")
+                        last_line_ended_with_cr = True
+                    elif line_type in ["STATUS_INFO", "STATUS_MERGE", "ERROR_LINE"]:
+                        if last_line_ended_with_cr:
+                            sys.stdout.write("\n") # Newline if previous was progress/spinner
+                        # Pad status lines too, for consistent clearing if they vary in length
+                        sys.stdout.write(message.ljust(PROGRESS_LINE_WIDTH) + "\n")
+                        last_line_ended_with_cr = False
+                    elif line_type == "IGNORE":
+                        # Show spinner for any ignored line to indicate activity more readily.
+                        spinner_char = spinner_frames[spinner_idx]
+                        spinner_idx = (spinner_idx + 1) % len(spinner_frames)
+                        sys.stdout.write(f"{spinner_char} Processing...".ljust(PROGRESS_LINE_WIDTH) + "\r")
+                        last_line_ended_with_cr = True # Spinner line itself ends with \r
+                    
+                    sys.stdout.flush()
+                elif process.poll() is None:
+                    # Process is running but no output (blocking readline)
+                    # A more active spinner would need non-blocking I/O or timers
+                    pass 
+            
+            # After the loop, ensure the cursor is on a new line if the last output used \r
+            if last_line_ended_with_cr:
+                sys.stdout.write("\n")
+            sys.stdout.flush()
+
+            process.wait() 
             if process.returncode != 0:
-                error = process.stderr.read()
-                raise DownloadError(f"Download failed: {error}")
+                # Error already printed if caught by ERROR_LINE, but raise to indicate failure
+                # The full stderr was merged with stdout, so it would have been processed.
+                # We can still try to get any final error messages if needed, but it's tricky.
+                raise DownloadError(f"Download failed. yt-dlp exited with code {process.returncode}. Check output above.")
                 
         except subprocess.CalledProcessError as e:
-            raise DownloadError(f"Download failed: {e.stderr}")
+            raise DownloadError(f"Download failed during execution: {e.stderr if e.stderr else e}")
+        except Exception as e:
+            if not isinstance(e, DownloadError):
+                 raise DownloadError(f"An unexpected error occurred during download: {e}")
+            else:
+                raise
 
     def run(self) -> None:
         """Main execution flow."""
         try:
-            logger.info("Vimeo Downloader")
-            logger.info("=" * 50)
-
             vimeo_url, referer_url = self.get_urls()
             browser = self.get_browser()
-
-            logger.info("\nDownload Configuration:")
+            
+            # Print header info after collecting all inputs
+            logger.info("\nVimeo Downloader")
+            logger.info("=" * 50)
+            logger.info("Download Configuration:")
             logger.info(f"Video URL: {vimeo_url}")
             logger.info(f"Referer:   {referer_url}")
             logger.info(f"Browser:   {browser}")
             logger.info(f"Output Directory: {self.downloads_dir}")
             logger.info("=" * 50 + "\n")
 
-            logger.info("Starting download...")
             self.download(vimeo_url, referer_url, browser)
             logger.info(f"\nDownload completed successfully.")
             logger.info(f"Video saved in: {self.downloads_dir}")
